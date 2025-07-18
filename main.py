@@ -3,8 +3,9 @@ from msal import ConfidentialClientApplication
 import requests
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
-load_dotenv()
 
+load_dotenv()
+print("TENANT_ID:", os.environ.get("TENANT_ID"))
 # Configuration
 EMAIL_TO_WATCH = "bulksales@dellrefurbished.com"
 SUBJECT_KEYWORD = "Available Inventory Notification"
