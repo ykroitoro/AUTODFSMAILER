@@ -3,8 +3,15 @@ from msal import ConfidentialClientApplication
 import requests
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+
+
 
 load_dotenv()
+
 print("TENANT_ID:", os.environ.get("TENANT_ID"))
 # Configuration
 EMAIL_TO_WATCH = "bulksales@dellrefurbished.com"
@@ -55,11 +62,80 @@ def download_attachment(message_id, headers):
     print("No XLSX attachment found.")
     return None
 
+
+def send_summary_email(success, found, file_saved, subject_line):
+    sender = os.getenv("EMAIL_SENDER_ACCOUNT")  # Add this to your .env
+    recipient_email = os.getenv("RECIPIENT_EMAIL")
+
+    print(f"Sending summary email to: {recipient_email}")
+
+
+    token = get_access_token()
+    if not token:
+        print("Failed to get token for summary email.")
+        return
+
+    subject = "AUTODFSMAILER RUN SUCCESSFUL" if success else "AUTODFSMAILER RUN FAILED"
+    body = f"""
+    Run Summary:
+    Success: {success}
+    Email Found: {found}
+    File Saved: {file_saved}
+    Subject Line: {subject_line}
+    """
+
+    email_msg = {
+        "message": {
+            "subject": subject,
+            "body": {
+                "contentType": "Text",
+                "content": body
+            },
+           "toRecipients": [
+    {
+        "emailAddress": {
+            "address": recipient_email
+        }
+    }
+],
+
+        }
+    }
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(
+        f"https://graph.microsoft.com/v1.0/users/{sender}/sendMail",
+        headers=headers,
+        json=email_msg
+    )
+
+    if response.status_code == 202:
+        print("Summary email sent.")
+    else:
+        print(f"Failed to send summary email. Status code: {response.status_code}")
+        print(response.text)
+
+
+
+
+
 def main():
+    email_found = False
+    file_saved = False
+    subject_line = "No match"
+    success = True
+
     print("Accessing Microsoft Graph...")
     token = get_access_token()
     if not token:
         print("Auth failed.")
+        success = False
+        subject_line = "Auth failed"
+        send_summary_email(success=success, found=email_found, file_saved=file_saved, subject_line=subject_line)
         return
 
     headers = {
@@ -72,14 +148,21 @@ def main():
     target_msg = find_target_email(messages)
 
     if target_msg:
-        print(f"Match found: {target_msg['subject']}")
+        email_found = True
+        subject_line = target_msg['subject']
+        print(f"Match found: {subject_line}")
         file_path = download_attachment(target_msg["id"], headers)
 
         if file_path:
+            file_saved = True
             print("Running processing script...")
             os.system(f"python3 processor.py {file_path}")
     else:
         print("No matching email found in last 24 hours.")
 
+    send_summary_email(success=success, found=email_found, file_saved=file_saved, subject_line=subject_line)
+
+
 if __name__ == "__main__":
     main()
+
