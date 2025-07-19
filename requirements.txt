@@ -72,5 +72,5 @@ Werkzeug==3.0.3
 wrapt==1.14.0
 XlsxWriter==3.0.3
 yarl==1.20.0
-yfinance==0.2.61
+yfinance==0.2.27
 zipp==3.18.1
