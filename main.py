@@ -6,18 +6,35 @@ from dotenv import load_dotenv
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+import base64
+
+
 
 
 
 
 load_dotenv()
 
-print("TENANT_ID:", os.environ.get("TENANT_ID"))
+print("TENANT_ID:", os.getenv("TENANT_ID"))
 # Configuration
-EMAIL_TO_WATCH = "bulksales@dellrefurbished.com"
-SUBJECT_KEYWORD = "Available Inventory Notification"
-FILENAME_TO_SAVE = "DFS_LIST.XLSX"
-SAVE_FOLDER = "/tmp"  # Use /tmp for Railway/Render; it's writable
+##USER_EMAIL = "bulksales@dellrefurbished.com"
+##SUBJECT_KEYWORD = "Available Inventory Notification"
+##SAVE_PATH = "DFS_LIST.XLSX"
+##SAVE_FOLDER = "/tmp"  # Use /tmp for Railway/Render; it's writable
+##SENDER_EMAIL = "yosi@myy-tech.com"
+##RECIPIENT_EMAIL = "yosi@myy-tech.com"
+
+USER_EMAIL = os.getenv("USER_EMAIL")
+SUBJECT_KEYWORD = os.getenv("SUBJECT_KEYWORD")
+#SAVE_PATH = os.path.join(os.getenv("SAVE_FOLDER", "/tmp"), os.getenv("SAVE_PATH", "DFS_LIST.XLSX"))
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
+SAVE_FOLDER = os.getenv("SAVE_FOLDER", "/tmp")
+SAVE_FILENAME = os.getenv("SAVE_PATH", "DFS_LIST.XLSX")
+SAVE_PATH = os.path.join(os.getenv("SAVE_FOLDER"), os.getenv("SAVE_FILENAME"))
+
+
+
 
 def get_access_token():
     app = ConfidentialClientApplication(
@@ -29,97 +46,118 @@ def get_access_token():
     return result.get("access_token")
 
 def fetch_messages(headers):
-    url = f"https://graph.microsoft.com/v1.0/users/{os.getenv('TARGET_USER')}/messages?$top=10&$orderby=receivedDateTime desc"
+    url = f"https://graph.microsoft.com/v1.0/users/{SENDER_EMAIL}/mailFolders/inbox/messages?$top=25"
     response = requests.get(url, headers=headers)
-    return response.json().get("value", [])
+    if response.status_code == 200:
+        data = response.json()
+        messages = data.get("value", [])
+        print(f">>> Retrieved {len(messages)} messages from inbox.")
+        return messages
+    else:
+        print(f"Failed to fetch messages. Status code: {response.status_code}")
+        print(response.text)
+        return []
+
+
+    
 
 def find_target_email(messages):
     now = datetime.now(timezone.utc)
     cutoff = now - timedelta(hours=24)
+    print(f"Cutoff time: {cutoff.isoformat()}")
+
     for msg in messages:
-        subject = msg["subject"]
-        sender = msg["from"]["emailAddress"]["address"]
+        subject = msg.get("subject", "")
+        sender = msg.get("from", {}).get("emailAddress", {}).get("address", "")
         received = datetime.fromisoformat(msg["receivedDateTime"].replace("Z", "+00:00"))
-        if (EMAIL_TO_WATCH.lower() == sender.lower()
+
+        print(f">>> Checking email from: {sender}")
+        print(f"    Subject: {subject}")
+        print(f"    Received: {received.isoformat()}")
+
+        if (
+            sender.lower() == USER_EMAIL.lower()
             and SUBJECT_KEYWORD.lower() in subject.lower()
-            and received >= cutoff):
+            and received >= cutoff
+        ):
+            print(">>> MATCH FOUND")
             return msg
+
+    print(">>> No matching email found.")
     return None
+
+
 
 def download_attachment(message_id, headers):
-    url = f"https://graph.microsoft.com/v1.0/users/{os.getenv('TARGET_USER')}/messages/{message_id}/attachments"
-    response = requests.get(url, headers=headers)
-    attachments = response.json().get("value", [])
+    attachment_url = f"https://graph.microsoft.com/v1.0/users/{SENDER_EMAIL}/messages/{message_id}/attachments"
+    response = requests.get(attachment_url, headers=headers)
 
+    if response.status_code != 200:
+        print(f"Failed to fetch attachments. Status code: {response.status_code}")
+        print(response.text)
+        return None
+
+    attachments = response.json().get("value", [])
     for att in attachments:
-        if att.get("@odata.mediaContentType") and "xlsx" in att.get("name", "").lower():
-            content_bytes = att["contentBytes"]
-            file_path = os.path.join(SAVE_FOLDER, FILENAME_TO_SAVE)
-            with open(file_path, "wb") as f:
-                f.write(bytes.fromhex(content_bytes))
-            print(f"Saved attachment to {file_path}")
-            return file_path
-    print("No XLSX attachment found.")
+        print(f"Found attachment: {att['name']}")
+        if att["@odata.type"] == "#microsoft.graph.fileAttachment":
+            file_data = att["contentBytes"]
+            with open(SAVE_PATH, "wb") as f:
+                f.write(base64.b64decode(file_data))
+            print(f"Attachment saved to: {SAVE_PATH}")
+            return SAVE_PATH
+
+    print("No file attachment found.")
     return None
 
 
-def send_summary_email(success, found, file_saved, subject_line):
-    sender = os.getenv("EMAIL_SENDER_ACCOUNT")  # Add this to your .env
-    recipient_email = os.getenv("RECIPIENT_EMAIL")
+def send_summary_email(success=True, found=False, file_saved=False, subject_line=""):
+    import requests
 
-    print(f"Sending summary email to: {recipient_email}")
-
-
-    token = get_access_token()
-    if not token:
-        print("Failed to get token for summary email.")
+    access_token = get_access_token()
+    if not access_token:
+        print("Unable to send summary email: No access token.")
         return
 
-    subject = "AUTODFSMAILER RUN SUCCESSFUL" if success else "AUTODFSMAILER RUN FAILED"
-    body = f"""
-    Run Summary:
-    Success: {success}
-    Email Found: {found}
-    File Saved: {file_saved}
-    Subject Line: {subject_line}
+    status = "SUCCESS" if success else "FAILED"
+    body_content = f"""
+    AUTODFSMAILER RUN {status}
+
+    - Email Found: {'Yes' if found else 'No'}
+    - File Saved: {'Yes' if file_saved else 'No'}
+    - Email Subject: {subject_line if subject_line else 'N/A'}
     """
 
-    email_msg = {
+    message = {
         "message": {
-            "subject": subject,
+            "subject": f"AUTODFSMAILER RUN {status}",
             "body": {
                 "contentType": "Text",
-                "content": body
+                "content": body_content
             },
-           "toRecipients": [
-    {
-        "emailAddress": {
-            "address": recipient_email
+            "toRecipients": [
+                {
+                    "emailAddress": {
+                        "address": RECIPIENT_EMAIL
+                    }
+                }
+            ]
         }
     }
-],
 
-        }
-    }
-
+    endpoint = f"https://graph.microsoft.com/v1.0/users/{SENDER_EMAIL}/sendMail"
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {access_token}",
         "Content-Type": "application/json"
     }
 
-    response = requests.post(
-        f"https://graph.microsoft.com/v1.0/users/{sender}/sendMail",
-        headers=headers,
-        json=email_msg
-    )
+    response = requests.post(endpoint, headers=headers, json=message)
 
     if response.status_code == 202:
-        print("Summary email sent.")
+        print("Summary email sent successfully.")
     else:
         print(f"Failed to send summary email. Status code: {response.status_code}")
         print(response.text)
-
-
 
 
 
@@ -159,6 +197,8 @@ def main():
             os.system(f"python3 processor.py {file_path}")
     else:
         print("No matching email found in last 24 hours.")
+        
+        
 
     send_summary_email(success=success, found=email_found, file_saved=file_saved, subject_line=subject_line)
 
