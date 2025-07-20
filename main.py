@@ -7,8 +7,8 @@ import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import base64
-
-
+import dropbox
+from dropbox.files import WriteMode
 
 
 
@@ -32,7 +32,7 @@ RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
 SAVE_FOLDER = os.getenv("SAVE_FOLDER", "/tmp")
 SAVE_FILENAME = os.getenv("SAVE_PATH", "DFS_LIST.XLSX")
 SAVE_PATH = os.path.join(os.getenv("SAVE_FOLDER"), os.getenv("SAVE_FILENAME"))
-
+DROPBOX_ACCESS_TOKEN = os.getenv("DROPBOX_ACCESS_TOKEN")
 
 
 
@@ -105,10 +105,40 @@ def download_attachment(message_id, headers):
             with open(SAVE_PATH, "wb") as f:
                 f.write(base64.b64decode(file_data))
             print(f"Attachment saved to: {SAVE_PATH}")
+            upload_to_dropbox(SAVE_PATH, "/AUTODFSMAILER/DFS_LIST.XLSX")
             return SAVE_PATH
+
+
 
     print("No file attachment found.")
     return None
+
+
+def upload_to_dropbox(local_path, dropbox_path):
+
+##     access_token = os.getenv("DROPBOX_ACCESS_TOKEN")
+##    if not access_token:
+##        print("Missing Dropbox access token.")
+##        return False
+
+
+    dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
+
+    # Step 1: Try to delete the existing file if it exists
+    try:
+        dbx.files_delete_v2(dropbox_path)
+        print(f"Deleted existing file in Dropbox: {dropbox_path}")
+    except dropbox.exceptions.ApiError as e:
+        if isinstance(e.error, dropbox.files.DeleteError) and e.error.is_path_lookup() and e.error.get_path_lookup().is_not_found():
+            print("No existing file to delete.")
+        else:
+            print("Unexpected error during delete:", e)
+
+    # Step 2: Upload new file
+    with open(local_path, "rb") as f:
+        dbx.files_upload(f.read(), dropbox_path, mode=dropbox.files.WriteMode("add"))
+        print(f"Uploaded new file to Dropbox: {dropbox_path}")
+
 
 
 def send_summary_email(success=True, found=False, file_saved=False, subject_line=""):
