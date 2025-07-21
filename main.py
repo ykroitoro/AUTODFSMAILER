@@ -9,7 +9,8 @@ from email.mime.multipart import MIMEMultipart
 import base64
 import dropbox
 from dropbox.files import WriteMode
-
+from dropbox.oauth import DropboxOAuth2FlowNoRedirect
+from dropbox.exceptions import AuthError
 
 
 
@@ -33,6 +34,9 @@ SAVE_FOLDER = os.getenv("SAVE_FOLDER", "/tmp")
 SAVE_FILENAME = os.getenv("SAVE_PATH", "DFS_LIST.XLSX")
 SAVE_PATH = os.path.join(os.getenv("SAVE_FOLDER"), os.getenv("SAVE_FILENAME"))
 DROPBOX_ACCESS_TOKEN = os.getenv("DROPBOX_ACCESS_TOKEN")
+app_key = os.getenv("DROPBOX_APP_KEY")
+app_secret = os.getenv("DROPBOX_APP_SECRET")
+refresh_token = os.getenv("DROPBOX_REFRESH_TOKEN")
 
 
 
@@ -115,30 +119,32 @@ def download_attachment(message_id, headers):
 
 
 def upload_to_dropbox(local_path, dropbox_path):
+    app_key = os.getenv("DROPBOX_APP_KEY")
+    app_secret = os.getenv("DROPBOX_APP_SECRET")
+    refresh_token = os.getenv("DROPBOX_REFRESH_TOKEN")
 
-##     access_token = os.getenv("DROPBOX_ACCESS_TOKEN")
-##    if not access_token:
-##        print("Missing Dropbox access token.")
-##        return False
+    # Initialize Dropbox client using refresh token (no more token expiration!)
+    dbx = dropbox.Dropbox(
+        app_key=app_key,
+        app_secret=app_secret,
+        oauth2_refresh_token=refresh_token
+    )
 
-
-    dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
-
-    # Step 1: Try to delete the existing file if it exists
     try:
+        # Delete existing file if present (optional)
         dbx.files_delete_v2(dropbox_path)
-        print(f"Deleted existing file in Dropbox: {dropbox_path}")
     except dropbox.exceptions.ApiError as e:
         if isinstance(e.error, dropbox.files.DeleteError) and e.error.is_path_lookup() and e.error.get_path_lookup().is_not_found():
-            print("No existing file to delete.")
+            pass  # File doesn't exist—nothing to delete
         else:
-            print("Unexpected error during delete:", e)
+            raise  # Re-raise other errors
 
-    # Step 2: Upload new file
     with open(local_path, "rb") as f:
-        dbx.files_upload(f.read(), dropbox_path, mode=dropbox.files.WriteMode("add"))
-        print(f"Uploaded new file to Dropbox: {dropbox_path}")
+        dbx.files_upload(f.read(), dropbox_path, mode=WriteMode("overwrite"))
 
+    print(f"Uploaded to Dropbox: {dropbox_path}")
+
+    
 
 
 def send_summary_email(success=True, found=False, file_saved=False, subject_line=""):
