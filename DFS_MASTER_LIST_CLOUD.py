@@ -1,4 +1,4 @@
-import tkinter as tk
+# import tkinter as tk
 import os
 import pandas as pd
 import re
@@ -11,7 +11,7 @@ from openpyxl.utils.dataframe import dataframe_to_rows
 import copy
 from dotenv import load_dotenv
 from colorama import Fore, Style, init
-from tkinter import filedialog, messagebox
+# from tkinter import filedialog, messagebox
 import subprocess
 from PIL import Image, ImageTk
 import dropbox
