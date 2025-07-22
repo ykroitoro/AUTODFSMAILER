@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 from colorama import Fore, Style, init
 # from tkinter import filedialog, messagebox
 import subprocess
-from PIL import Image, ImageTk
+from PIL import Image
 import dropbox
 from dropbox.files import WriteMode
 from dropbox.oauth import DropboxOAuth2FlowNoRedirect
