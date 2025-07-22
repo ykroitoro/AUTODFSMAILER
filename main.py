@@ -11,7 +11,10 @@ import dropbox
 from dropbox.files import WriteMode
 from dropbox.oauth import DropboxOAuth2FlowNoRedirect
 from dropbox.exceptions import AuthError
-
+import subprocess
+import time
+from colorama import Fore, Style, init
+import sys
 
 
 load_dotenv()
@@ -230,7 +233,20 @@ def main():
         if file_path:
             file_saved = True
             print("Running processing script...")
-            os.system(f"python3 processor.py {file_path}")
+            result1 = subprocess.run(["python3", "processor.py", file_path], capture_output=True, text=True)
+            print(result1.stdout)
+
+            print("⏳ Waiting 10 seconds for Dropbox to sync...")
+            time.sleep(10)
+
+            print("Running DFS_MASTER_LIST_CLOUD.py...")
+            result2 = subprocess.run([sys.executable, "DFS_MASTER_LIST_CLOUD.py"], capture_output=True, text=True)
+
+            if result2.returncode == 0:
+                print("✅ DFS_MASTER_LIST_CLOUD.py executed successfully.")
+            else:
+                print("❌ Error running DFS_MASTER_LIST_CLOUD.py:")
+                print(result2.stderr)
     else:
         print("No matching email found in last 24 hours.")
         
