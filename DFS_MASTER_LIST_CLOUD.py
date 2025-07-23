@@ -45,7 +45,11 @@ INPUT_PATH = "/AUTODFSMAILER/DFS_LIST.XLSX"
 MENU_TEMPLATE_PATH = "/AUTODFSMAILER/DELL_LIST_MENU.xlsx"
 OUTPUT_FILENAME = f"DELL_LIST_GRADE_A_{datetime.now().strftime('%m-%d-%Y__%H-%M-%S')}.xlsx"
 OUTPUT_PATH = f"/AUTODFSMAILER/LISTS/{OUTPUT_FILENAME}"
-
+USER_EMAIL = os.getenv("USER_EMAIL")
+SUBJECT_KEYWORD = os.getenv("SUBJECT_KEYWORD")
+#SAVE_PATH = os.path.join(os.getenv("SAVE_FOLDER", "/tmp"), os.getenv("SAVE_PATH", "DFS_LIST.XLSX"))
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
 
  # Initialize Dropbox client using refresh token (no more token expiration!)
 dbx = dropbox.Dropbox(
@@ -506,9 +510,6 @@ for sheet_name in wb.sheetnames:
 
 
 
-
-
-
 # Save the updated 'DELL_LIST_MENU.xlsx' file, which now contains all sheet
 
 excel_stream = BytesIO()
@@ -524,6 +525,7 @@ from io import BytesIO
 # Output the message with the total number of lines
 total_lines = len(df)  # Total number of lines in the original dataframe
 print(f"Done Processing... Total number of lines: {total_lines}")
+
 
 
 

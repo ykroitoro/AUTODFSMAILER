@@ -15,6 +15,10 @@ import subprocess
 import time
 from colorama import Fore, Style, init
 import sys
+from pathlib import Path
+import json
+
+
 
 
 load_dotenv()
@@ -199,6 +203,46 @@ def send_summary_email(success=True, found=False, file_saved=False, subject_line
         print(response.text)
 
 
+def send_email_with_attachment(subject, body, recipient, attachment_path):
+
+    sender_email = os.getenv("SENDER_EMAIL")    
+    access_token = get_access_token()
+    if not access_token:
+        print("Unable to send summary email: No access token.")
+        return
+    
+    with open(attachment_path, "rb") as file:
+        file_content = file.read()
+    filename = os.path.basename(attachment_path)
+    encoded_content = base64.b64encode(file_content).decode("utf-8")
+
+    message = {
+        "message": {
+            "subject": subject,
+            "body": {"contentType": "Text", "content": body},
+            "toRecipients": [{"emailAddress": {"address": recipient}}],
+            "attachments": [{
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": filename,
+                "contentBytes": encoded_content
+            }]
+        },
+        "saveToSentItems": "true"
+    }
+
+    url = f"https://graph.microsoft.com/v1.0/users/{sender_email}/sendMail"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, headers=headers, data=json.dumps(message))
+    if response.status_code != 202:
+        raise Exception(f"Failed to send email: {response.status_code} - {response.text}")
+
+
+
+
 
 def main():
     email_found = False
@@ -236,14 +280,28 @@ def main():
             result1 = subprocess.run(["python3", "processor.py", file_path], capture_output=True, text=True)
             print(result1.stdout)
 
-            print("⏳ Waiting 10 seconds for Dropbox to sync...")
-            time.sleep(10)
+            print("⏳ Waiting 5 seconds for Dropbox to sync...")
+            time.sleep(5)
 
             print("Running DFS_MASTER_LIST_CLOUD.py...")
             result2 = subprocess.run([sys.executable, "DFS_MASTER_LIST_CLOUD.py"], capture_output=True, text=True)
 
             if result2.returncode == 0:
                 print("✅ DFS_MASTER_LIST_CLOUD.py executed successfully.")
+                # Locate latest final file
+                LISTS_DIR = Path("/Users/yosi/MYTECH Dropbox/Yosef Kroitoro/AUTODFSMAILER/LISTS")
+                latest_file = max(LISTS_DIR.glob("DELL_LIST_GRADE_A_*.xlsx"), key=os.path.getctime)
+                # Send email with that file
+                try:
+                    send_email_with_attachment(
+                        subject="Your Final GRADE A File",
+                        body="Attached is the latest REFURBISHED GRADE A SYSTEMS FILE.",
+                        recipient=os.getenv("RECIPIENT_EMAIL"),
+                        attachment_path=str(latest_file)
+                    )
+                    print(f"✅ Final file emailed to {os.getenv('RECIPIENT_EMAIL')}: {latest_file.name}")
+                except Exception as e:
+                    print(f"❌ Failed to email final file: {e}")
             else:
                 print("❌ Error running DFS_MASTER_LIST_CLOUD.py:")
                 print(result2.stderr)
