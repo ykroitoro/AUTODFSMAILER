@@ -44,7 +44,7 @@ multitasking==0.0.11
 nulltype==2.3.1
 openpyxl==3.1.5
 packaging==25.0
-pandas==2.2.3
+pandas==3.0.5
 peewee==3.18.1
 pillow==11.2.1
 plaid-python==21.1.0
@@ -71,7 +71,7 @@ websocket-client==1.8.0
 websockets==10.4
 Werkzeug==3.0.3
 wrapt==1.14.0
-XlsxWriter==3.0.3
+XlsxWriter>=3.0.5
 yarl==1.20.0
 yfinance==0.2.27
 zipp==3.18.1

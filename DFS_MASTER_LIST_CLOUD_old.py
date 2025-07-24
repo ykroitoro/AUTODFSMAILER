@@ -26,6 +26,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
 import json
+import pickle
 
 
 
@@ -59,9 +60,6 @@ SUBJECT_KEYWORD = os.getenv("SUBJECT_KEYWORD")
 #SAVE_PATH = os.path.join(os.getenv("SAVE_FOLDER", "/tmp"), os.getenv("SAVE_PATH", "DFS_LIST.XLSX"))
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
-CREDENTIALS_JSON = os.getenv("CREDENTIALS_JSON")
-TOKEN_JSON = os.getenv("TOKEN_JSON")
-                            
 
  # Initialize Dropbox client using refresh token (no more token expiration!)
 dbx = dropbox.Dropbox(
@@ -92,55 +90,56 @@ def sanitize_sheet_title(title):
 _, input_res = dbx.files_download(INPUT_PATH)
 df = pd.read_excel(io.BytesIO(input_res.content), sheet_name="Worksheet")
 
+final_filename = os.path.basename(final_file_path)
 
-## upload function for final file version into google drive
-print("uploading file to google drive")
+
+# Define Google Drive scopes
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 
-def upload_to_drive_oauth(file_path, file_name):
+def upload_to_drive_oauth(file_path, filename, folder_id):
+    print("🔐 Authenticating with Google Drive...")
+
     creds = None
 
-    # Load token.json content from environment variable
-    token_json_content = os.getenv("TOKEN_JSON")
-    if token_json_content is None:
-        raise ValueError("❌ Environment variable TOKEN_JSON is not set.")
+    # Try to load token.json if it exists
+    if os.path.exists("token.json"):
+        with open("token.json", "rb") as token:
+            creds = pickle.load(token)
 
-    # Load credentials from the environment variable
-    credentials_json = os.getenv("CREDENTIALS_JSON")
-    if credentials_json is None:
-        raise ValueError("❌ Environment variable CREDENTIALS_JSON is not set.")
-    credentials_dict = json.loads(credentials_json)
-
-
-    # Parse the JSON string into a dictionary
-    token_info = json.loads(token_json_content)
-
-    # Create credentials from the token dictionary
-    creds = Credentials.from_authorized_user_info(token_info, SCOPES)
-
-    # If no token or expired, login manually
+    # If no (valid) credentials, perform login via console flow
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_config(credentials_dict, SCOPES)
-            creds = flow.run_local_server(port=0)
+            creds_content = os.environ['CREDENTIALS_JSON']
+            creds_dict = json.loads(creds_content)
 
-            token_path = os.getenv("TOKEN_JSON")
-        if not token_path:
-            raise ValueError("Missing TOKEN_JSON path in environment variables")
+            flow = InstalledAppFlow.from_client_config(creds_dict, SCOPES)
+            creds = flow.run_console()  # ✅ Cloud-friendly — paste code in terminal
 
-        with open(token_path, 'w') as token:
-            token.write(creds.to_json())
+        # Save the credentials for the next run
+        with open("token.json", "wb") as token:
+            pickle.dump(creds, token)
 
+    # Build Google Drive service
     service = build('drive', 'v3', credentials=creds)
 
-    file_metadata = {'name': file_name}
+    # Prepare file metadata and upload
+    file_metadata = {
+        'name': filename,
+        'parents': [folder_id]
+    }
+
     media = MediaFileUpload(file_path, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
 
-    file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-    print(f"File uploaded: {file.get('webViewLink')}")
-    return file.get('id')
+    uploaded_file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id'
+    ).execute()
+
+    print(f"✅ Upload successful. File ID: {uploaded_file.get('id')}")
+    return uploaded_file.get('id')
 
 
 def main(ans1, ans2):
@@ -595,10 +594,15 @@ with open(final_file_path, "wb") as f:
     f.write(excel_stream.getbuffer())
 
 # Upload to Google Drive
+final_file_path = new_file_path  # <-- ensure this line exists
+final_filename = os.path.basename(final_file_path)
+
 google_drive_file_id = upload_to_drive_oauth(
     file_path=final_file_path,
-    file_name=os.path.basename(final_file_path)
+    filename=os.path.basename(final_file_path),
+    folder_id=your_drive_folder_id
 )
+
 
 
 print(f"Saved file to Google Drive with ID: {google_drive_file_id}")

@@ -25,8 +25,6 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
-import json
-
 
 
 
@@ -59,9 +57,6 @@ SUBJECT_KEYWORD = os.getenv("SUBJECT_KEYWORD")
 #SAVE_PATH = os.path.join(os.getenv("SAVE_FOLDER", "/tmp"), os.getenv("SAVE_PATH", "DFS_LIST.XLSX"))
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
-CREDENTIALS_JSON = os.getenv("CREDENTIALS_JSON")
-TOKEN_JSON = os.getenv("TOKEN_JSON")
-                            
 
  # Initialize Dropbox client using refresh token (no more token expiration!)
 dbx = dropbox.Dropbox(
@@ -100,37 +95,19 @@ SCOPES = ['https://www.googleapis.com/auth/drive.file']
 def upload_to_drive_oauth(file_path, file_name):
     creds = None
 
-    # Load token.json content from environment variable
-    token_json_content = os.getenv("TOKEN_JSON")
-    if token_json_content is None:
-        raise ValueError("❌ Environment variable TOKEN_JSON is not set.")
-
-    # Load credentials from the environment variable
-    credentials_json = os.getenv("CREDENTIALS_JSON")
-    if credentials_json is None:
-        raise ValueError("❌ Environment variable CREDENTIALS_JSON is not set.")
-    credentials_dict = json.loads(credentials_json)
-
-
-    # Parse the JSON string into a dictionary
-    token_info = json.loads(token_json_content)
-
-    # Create credentials from the token dictionary
-    creds = Credentials.from_authorized_user_info(token_info, SCOPES)
+    # Token will be saved here after first login
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
 
     # If no token or expired, login manually
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_config(credentials_dict, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
 
-            token_path = os.getenv("TOKEN_JSON")
-        if not token_path:
-            raise ValueError("Missing TOKEN_JSON path in environment variables")
-
-        with open(token_path, 'w') as token:
+        with open('token.json', 'w') as token:
             token.write(creds.to_json())
 
     service = build('drive', 'v3', credentials=creds)
