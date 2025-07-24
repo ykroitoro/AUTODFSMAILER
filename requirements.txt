@@ -76,3 +76,7 @@ yarl==1.20.0
 yfinance==0.2.27
 zipp==3.18.1
 dropbox
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client

@@ -18,23 +18,12 @@ import sys
 from pathlib import Path
 import json
 from io import BytesIO
-import base64
-import ssl
-from email.message import EmailMessage
-import certifi
 
 
-
-os.environ["SSL_CERT_FILE"] = certifi.where()
 
 load_dotenv()
 
-
-from ms_auth import get_access_token
-access_token = get_access_token()
-
-
-#print("TENANT_ID:", os.getenv("TENANT_ID"))
+print("TENANT_ID:", os.getenv("TENANT_ID"))
 # Configuration
 ##USER_EMAIL = "bulksales@dellrefurbished.com"
 ##SUBJECT_KEYWORD = "Available Inventory Notification"
@@ -55,13 +44,7 @@ DROPBOX_ACCESS_TOKEN = os.getenv("DROPBOX_ACCESS_TOKEN")
 app_key = os.getenv("DROPBOX_APP_KEY")
 app_secret = os.getenv("DROPBOX_APP_SECRET")
 refresh_token = os.getenv("DROPBOX_REFRESH_TOKEN")
-DROPBOX_PATH = "/AUTODFSMAILER/LISTS/DELL_LIST_GRADE_A_LATEST.xlsx"
-LOCAL_PATH = "/tmp/temp_downloaded.xlsx"
-dbx = dropbox.Dropbox(DROPBOX_ACCESS_TOKEN)
 
-
-
-load_dotenv()  # Make sure .env variables are loaded
 
 
 def get_access_token():
@@ -99,9 +82,9 @@ def find_target_email(messages):
         sender = msg.get("from", {}).get("emailAddress", {}).get("address", "")
         received = datetime.fromisoformat(msg["receivedDateTime"].replace("Z", "+00:00"))
 
-        #print(f">>> Checking email from: {sender}")
-        #print(f"    Subject: {subject}")
-        #print(f"    Received: {received.isoformat()}")
+        print(f">>> Checking email from: {sender}")
+        print(f"    Subject: {subject}")
+        print(f"    Received: {received.isoformat()}")
 
         if (
             sender.lower() == USER_EMAIL.lower()
@@ -168,25 +151,6 @@ def upload_to_dropbox(local_path, dropbox_path):
 
     print(f"Uploaded to Dropbox: {dropbox_path}")
 
-
-def download_from_dropbox(dropbox_path):
-    import dropbox
-    import os
-
-    app_key = os.getenv("DROPBOX_APP_KEY")
-    app_secret = os.getenv("DROPBOX_APP_SECRET")
-    refresh_token = os.getenv("DROPBOX_REFRESH_TOKEN")
-
-    # Create a Dropbox client that auto-refreshes token
-    dbx = dropbox.Dropbox(
-        app_key=app_key,
-        app_secret=app_secret,
-        oauth2_refresh_token=refresh_token
-    )
-
-    metadata, res = dbx.files_download(dropbox_path)
-    return res.content
-
     
 
 
@@ -239,6 +203,43 @@ def send_summary_email(success=True, found=False, file_saved=False, subject_line
         print(response.text)
 
 
+def send_email_with_attachment(subject, body, recipient, attachment_path):
+
+    sender_email = os.getenv("SENDER_EMAIL")    
+    access_token = get_access_token()
+    if not access_token:
+        print("Unable to send summary email: No access token.")
+        return
+    
+    with open(attachment_path, "rb") as file:
+        file_content = file.read()
+    filename = os.path.basename(attachment_path)
+    encoded_content = base64.b64encode(file_content).decode("utf-8")
+
+    message = {
+        "message": {
+            "subject": subject,
+            "body": {"contentType": "Text", "content": body},
+            "toRecipients": [{"emailAddress": {"address": recipient}}],
+            "attachments": [{
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": filename,
+                "contentBytes": encoded_content
+            }]
+        },
+        "saveToSentItems": "true"
+    }
+
+    url = f"https://graph.microsoft.com/v1.0/users/{sender_email}/sendMail"
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+
+    response = requests.post(url, headers=headers, data=json.dumps(message))
+    if response.status_code != 202:
+        raise Exception(f"Failed to send email: {response.status_code} - {response.text}")
+
 
 
 
@@ -286,14 +287,23 @@ def main():
             result2 = subprocess.run([sys.executable, "DFS_MASTER_LIST_CLOUD.py"], capture_output=True, text=True)
 
             if result2.returncode == 0:
-                print("DFS_MASTER_LIST_CLOUD.py executed successfully.")
-
-                # Define the Dropbox path where DFS_MASTER_LIST_CLOUD.py saved the file
-                dropbox_path = "/AUTODFSMAILER/LISTS/DELL_LIST_GRADE_A_LATEST.xlsx"
-
-                                    
+                print("✅ DFS_MASTER_LIST_CLOUD.py executed successfully.")
+                # Locate latest final file
+                LISTS_DIR = Path("/Users/yosi/MYTECH Dropbox/Yosef Kroitoro/AUTODFSMAILER/LISTS")
+                latest_file = max(LISTS_DIR.glob("DELL_LIST_GRADE_A_*.xlsx"), key=os.path.getctime)
+                # Send email with that file
+                try:
+                    send_email_with_attachment(
+                        subject="Your Final GRADE A File",
+                        body="Attached is the latest REFURBISHED GRADE A SYSTEMS FILE.",
+                        recipient=os.getenv("RECIPIENT_EMAIL"),
+                        attachment_path=str(latest_file)
+                    )
+                    print(f"✅ Final file emailed to {os.getenv('RECIPIENT_EMAIL')}: {latest_file.name}")
+                except Exception as e:
+                    print(f"❌ Failed to email final file: {e}")
             else:
-                print("Error running DFS_MASTER_LIST_CLOUD.py:")
+                print("❌ Error running DFS_MASTER_LIST_CLOUD.py:")
                 print(result2.stderr)
     else:
         print("No matching email found in last 24 hours.")
@@ -308,3 +318,67 @@ if __name__ == "__main__":
 
 
 
+##            try:
+##                final_file_path = run_master_list_process()
+##                print(f"📤 File generated at: {final_file_path}")
+##
+##                time.sleep(3)
+##
+##                # Now use final_file_path to attach it in your email:
+##                # Dropbox client using refresh token
+##                DROPBOX_REFRESH_TOKEN = os.getenv("DROPBOX_REFRESH_TOKEN")
+##                DROPBOX_APP_KEY = os.getenv("DROPBOX_APP_KEY")
+##                DROPBOX_APP_SECRET = os.getenv("DROPBOX_APP_SECRET")
+##
+##                dbx = dropbox.Dropbox(
+##                    oauth2_refresh_token=DROPBOX_REFRESH_TOKEN,
+##                    app_key=DROPBOX_APP_KEY,
+##                    app_secret=DROPBOX_APP_SECRET
+##                )
+##
+##                
+##                
+##                print(f"⛳️ Attempting to download from: {final_file_path}")
+##                metadata, res = dbx.files_download(final_path)
+##
+##                # Save
+##                with open("./LISTS/temp_downloaded.xlsx", "wb") as f:
+##                    f.write(res.content)
+##                print("✅ File downloaded locally.")
+##                
+####                local_path = "./LISTS/temp_downloaded.xlsx"
+####                with open(local_path, "wb") as f:
+####                    metadata, res = dbx.files_download(final_file_path)
+####                    f.write(res.content)
+##
+##                send_email_with_attachment(
+##                    subject="DELL LIST READY",
+##                    body="Attached is the final Excel file.",
+##                    recipient=RECIPIENT_EMAIL,
+##                    attachment_path=local_path
+##                )
+##
+##            except Exception as e:
+##                    print(f"❌ Error while generating or sending file: {e}")
+
+##            result2 = subprocess.run([sys.executable, "DFS_MASTER_LIST_CLOUD.py"], capture_output=True, text=True)
+##
+##            if result2.returncode == 0:
+##                print("✅ DFS_MASTER_LIST_CLOUD.py executed successfully.")
+##                # Locate latest final file
+##                LISTS_DIR = Path("/Users/yosi/MYTECH Dropbox/Yosef Kroitoro/AUTODFSMAILER/LISTS")
+##                latest_file = max(LISTS_DIR.glob("DELL_LIST_GRADE_A_*.xlsx"), key=os.path.getctime)
+##                # Send email with that file
+##                try:
+##                    send_email_with_attachment(
+##                        subject="Your Final GRADE A File",
+##                        body="Attached is the latest REFURBISHED GRADE A SYSTEMS FILE.",
+##                        recipient=os.getenv("RECIPIENT_EMAIL"),
+##                        attachment_path=str(latest_file)
+##                    )
+##                    print(f"✅ Final file emailed to {os.getenv('RECIPIENT_EMAIL')}: {latest_file.name}")
+##                except Exception as e:
+##                    print(f"❌ Failed to email final file: {e}")
+##            else:
+##                print("❌ Error running DFS_MASTER_LIST_CLOUD.py:")
+##                #print(result2.stderr)
