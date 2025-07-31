@@ -1,4 +1,4 @@
-# import tkinter as tk
+# token_path# import tkinter as tk
 import os
 import pandas as pd
 import re
@@ -26,7 +26,6 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from google.auth.transport.requests import Request
 import json
-
 
 
 
@@ -59,9 +58,6 @@ SUBJECT_KEYWORD = os.getenv("SUBJECT_KEYWORD")
 #SAVE_PATH = os.path.join(os.getenv("SAVE_FOLDER", "/tmp"), os.getenv("SAVE_PATH", "DFS_LIST.XLSX"))
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
 RECIPIENT_EMAIL = os.getenv("RECIPIENT_EMAIL")
-CREDENTIALS_JSON = os.getenv("CREDENTIALS_JSON")
-TOKEN_JSON = os.getenv("TOKEN_JSON")
-                            
 
  # Initialize Dropbox client using refresh token (no more token expiration!)
 dbx = dropbox.Dropbox(
@@ -98,48 +94,38 @@ print("uploading file to google drive")
 SCOPES = ['https://www.googleapis.com/auth/drive.file']
 
 def upload_to_drive_oauth(file_path, file_name):
-    creds = None
-
-    # Load token.json content from environment variable
-    token_json_content = os.getenv("TOKEN_JSON")
-    if token_json_content is None:
+    # Load token from environment
+    token_json = os.getenv("TOKEN_JSON")
+    if not token_json:
         raise ValueError("❌ Environment variable TOKEN_JSON is not set.")
 
-    # Load credentials from the environment variable
-    credentials_json = os.getenv("CREDENTIALS_JSON")
-    if credentials_json is None:
-        raise ValueError("❌ Environment variable CREDENTIALS_JSON is not set.")
-    credentials_dict = json.loads(credentials_json)
+    # Convert to dict if stored as a JSON string
+    try:
+        token_dict = json.loads(token_json)
+    except json.JSONDecodeError as e:
+        raise ValueError("❌ Failed to decode TOKEN_JSON. Check formatting.") from e
 
+    # Create credentials object
+    creds = Credentials.from_authorized_user_info(token_dict, scopes=SCOPES)
 
-    # Parse the JSON string into a dictionary
-    token_info = json.loads(token_json_content)
-
-    # Create credentials from the token dictionary
-    creds = Credentials.from_authorized_user_info(token_info, SCOPES)
-
-    # If no token or expired, login manually
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_config(credentials_dict, SCOPES)
-            creds = flow.run_local_server(port=0)
-
-            token_path = os.getenv("TOKEN_JSON")
-        if not token_path:
-            raise ValueError("Missing TOKEN_JSON path in environment variables")
-
-        with open(token_path, 'w') as token:
-            token.write(creds.to_json())
-
+    # Build Google Drive service
     service = build('drive', 'v3', credentials=creds)
 
+    # Prepare file metadata and media
     file_metadata = {'name': file_name}
-    media = MediaFileUpload(file_path, mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+    media = MediaFileUpload(
+        file_path,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
 
-    file = service.files().create(body=file_metadata, media_body=media, fields='id, webViewLink').execute()
-    print(f"File uploaded: {file.get('webViewLink')}")
+    # Upload the file
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id, webViewLink'
+    ).execute()
+
+    print(f"✅ File uploaded: {file.get('webViewLink')}")
     return file.get('id')
 
 
