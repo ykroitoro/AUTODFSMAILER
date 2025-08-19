@@ -1,4 +1,4 @@
-# import tkinter as tk
+# token_path# import tkinter as tk
 import os
 import pandas as pd
 import re
@@ -20,6 +20,14 @@ from dropbox.oauth import DropboxOAuth2FlowNoRedirect
 from dropbox.exceptions import AuthError
 import io
 from io import BytesIO
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload
+from google.auth.transport.requests import Request
+import json
+
+
 
 # Initialize colorama
 init(autoreset=True)
@@ -28,7 +36,7 @@ init(autoreset=True)
 
 # Load .env values
 load_dotenv()
-print("TENANT_ID:", os.getenv("TENANT_ID"))
+# print("TENANT_ID:", os.getenv("TENANT_ID"))
 
 SAVE_FOLDER = os.getenv("SAVE_FOLDER", "/tmp")
 SAVE_FILENAME = os.getenv("SAVE_PATH", "DFS_LIST.XLSX")
@@ -39,12 +47,12 @@ app_secret = os.getenv("DROPBOX_APP_SECRET")
 refresh_token = os.getenv("DROPBOX_REFRESH_TOKEN")
 INPUT_PATH = "/AUTODFSMAILER/DFS_LIST.XLSX"
 MENU_TEMPLATE_PATH = "/AUTODFSMAILER/DELL_LIST_MENU.xlsx"
-OUTPUT_FILENAME = f"DELL_LIST_GRADE_A_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+OUTPUT_FILENAME = f"DELL_LIST_GRADE_A_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx"
+# OUTPUT_FILENAME = "DELL_LIST_GRADE_A_LATEST.xlsx"
 OUTPUT_PATH = f"/AUTODFSMAILER/LISTS/{OUTPUT_FILENAME}"
+# OUTPUT_PATH = os.path.expanduser(os.path.join("~/Dropbox/AUTODFSMAILER/LISTS", OUTPUT_FILENAME))
 INPUT_PATH = "/AUTODFSMAILER/DFS_LIST.XLSX"
 MENU_TEMPLATE_PATH = "/AUTODFSMAILER/DELL_LIST_MENU.xlsx"
-OUTPUT_FILENAME = f"DELL_LIST_GRADE_A_{datetime.now().strftime('%m-%d-%Y__%H-%M-%S')}.xlsx"
-OUTPUT_PATH = f"/AUTODFSMAILER/LISTS/{OUTPUT_FILENAME}"
 USER_EMAIL = os.getenv("USER_EMAIL")
 SUBJECT_KEYWORD = os.getenv("SUBJECT_KEYWORD")
 #SAVE_PATH = os.path.join(os.getenv("SAVE_FOLDER", "/tmp"), os.getenv("SAVE_PATH", "DFS_LIST.XLSX"))
@@ -80,6 +88,45 @@ def sanitize_sheet_title(title):
 _, input_res = dbx.files_download(INPUT_PATH)
 df = pd.read_excel(io.BytesIO(input_res.content), sheet_name="Worksheet")
 
+
+## upload function for final file version into google drive
+print("uploading file to google drive")
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
+
+def upload_to_drive_oauth(file_path, file_name):
+    # Load token from environment
+    token_json = os.getenv("TOKEN_JSON")
+    if not token_json:
+        raise ValueError("❌ Environment variable TOKEN_JSON is not set.")
+
+    # Convert to dict if stored as a JSON string
+    try:
+        token_dict = json.loads(token_json)
+    except json.JSONDecodeError as e:
+        raise ValueError("❌ Failed to decode TOKEN_JSON. Check formatting.") from e
+
+    # Create credentials object
+    creds = Credentials.from_authorized_user_info(token_dict, scopes=SCOPES)
+
+    # Build Google Drive service
+    service = build('drive', 'v3', credentials=creds)
+
+    # Prepare file metadata and media
+    file_metadata = {'name': file_name}
+    media = MediaFileUpload(
+        file_path,
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+    # Upload the file
+    file = service.files().create(
+        body=file_metadata,
+        media_body=media,
+        fields='id, webViewLink'
+    ).execute()
+
+    print(f"✅ File uploaded: {file.get('webViewLink')}")
+    return file.get('id')
 
 
 def main(ans1, ans2):
@@ -185,7 +232,8 @@ if not os.path.exists('LISTS'):
 
 # Save the dataframe to Excel
 current_time = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-new_file_path = os.path.join('LISTS', f'DELL_LIST_GRADE_A_{current_time}.xlsx')
+new_file_path = os.path.join('LISTS', OUTPUT_FILENAME)
+# new_file_path = os.path.join('LISTS', f'DELL_LIST_GRADE_A_{current_time}.xlsx')
 df.to_excel(new_file_path, index=False)
 
 
@@ -512,20 +560,80 @@ for sheet_name in wb.sheetnames:
 
 # Save the updated 'DELL_LIST_MENU.xlsx' file, which now contains all sheet
 
+# Prepare the file in memory
 excel_stream = BytesIO()
 menu_wb.save(excel_stream)
 excel_stream.seek(0)
 
-dbx.files_upload(excel_stream.read(), OUTPUT_PATH, mode=WriteMode("overwrite"))
+# Upload to Dropbox (overwrite mode)
+dropbox_path = f"/AUTODFSMAILER/LISTS/{OUTPUT_FILENAME}"  # assuming OUTPUT_FILENAME = 'DELL_LIST_GRADE_A_LATEST.xlsx'
+dbx.files_upload(excel_stream.read(), dropbox_path, mode=WriteMode("overwrite"))
+
+
+#dbx.files_upload(excel_stream.read(), OUTPUT_PATH, mode=WriteMode("overwrite"))
 print(f"Saved processed file to Dropbox at: {OUTPUT_PATH}")
 from io import BytesIO
 
+# Save the same file locally so it can be uploaded to Google Drive
+excel_stream.seek(0)
+final_file_path = f"/tmp/{OUTPUT_FILENAME}"
+with open(final_file_path, "wb") as f:
+    f.write(excel_stream.getbuffer())
 
+# Upload to Google Drive
+google_drive_file_id = upload_to_drive_oauth(
+    file_path=final_file_path,
+    file_name=os.path.basename(final_file_path)
+)
+
+
+print(f"Saved file to Google Drive with ID: {google_drive_file_id}")
 
 # Output the message with the total number of lines
 total_lines = len(df)  # Total number of lines in the original dataframe
 print(f"Done Processing... Total number of lines: {total_lines}")
 
+
+# --- Email the file using Gmail (from the same final_file_path) ---
+print("Sending final file with gmail to yosi@myy-tech.com")
+import smtplib
+import ssl
+from email.message import EmailMessage
+import mimetypes
+from pathlib import Path
+
+sender_email = os.getenv("GMAIL_SENDER_EMAIL")
+app_password = os.getenv("GMAIL_APP_PASSWORD")
+recipient_email = os.getenv("RECIPIENT_EMAIL")
+
+
+# Setup email
+msg = EmailMessage()
+msg["Subject"] = "Final DELL List"
+msg["From"] = sender_email
+msg["To"] = recipient_email
+msg.set_content("Please find the final DELL list attached.")
+
+# Attach the local file
+filepath = final_file_path  # should be '/tmp/DELL_LIST_GRADE_A_LATEST.xlsx'
+mime_type, _ = mimetypes.guess_type(filepath)
+maintype, subtype = mime_type.split("/")
+
+with open(filepath, "rb") as f:
+    msg.add_attachment(
+        f.read(),
+        maintype=maintype,
+        subtype=subtype,
+        filename=Path(filepath).name
+    )
+
+# Send email
+context = ssl.create_default_context()
+with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context) as server:
+    server.login(sender_email, app_password)
+    server.send_message(msg)
+
+print("Final file emailed successfully!")
 
 
 
